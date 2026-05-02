@@ -1604,66 +1604,6 @@ def download_fs_action(target, source, env):
         return 1
 
 
-def esp32_create_combined_bin(source, target, env):
-    """
-    Post-build action: Combine all flash images into a single factory binary.
-    Uses esptool merge-bin to create a firmware.factory.bin that can be
-    flashed at offset 0.
-
-    Typical layout of the generated file:
-       Offset | File
-    -  0x0000 | bootloader.bin
-    -  0x8000 | partitions.bin
-    -  0xe000 | boot_app0.bin
-    - 0x10000 | firmware.bin
-    """
-    firmware_name = env.subst("$BUILD_DIR/${PROGNAME}.bin")
-    if not isfile(firmware_name):
-        return
-
-    factory_name = env.subst("$BUILD_DIR/${PROGNAME}.factory.bin")
-    flash_size = board.get("upload.flash_size", "4MB")
-    flash_mode = _get_board_flash_mode(env)
-    flash_freq = _get_board_f_image(env)
-    app_offset = env.subst("$ESP32_APP_OFFSET") or "0x10000"
-
-    cmd = [
-        "--chip", mcu,
-        "merge-bin",
-        "-o", factory_name,
-        "--flash-mode", flash_mode,
-        "--flash-freq", flash_freq,
-        "--flash-size", flash_size,
-    ]
-
-    print(f"Creating binary \"{os.path.basename(factory_name)}\" with:")
-    print("    Offset   | File")
-
-    for image in env.get("FLASH_EXTRA_IMAGES", []):
-        offset = image[0]
-        path = env.subst(image[1])
-        print(f" -  {str(offset).ljust(8)} | {os.path.basename(path)}")
-        cmd += [str(offset), path]
-
-    print(f" -  {app_offset.ljust(8)} | {os.path.basename(firmware_name)}")
-    cmd += [app_offset, firmware_name]
-
-    esptool = esptool_binary_path
-    try:
-        print(f"Running {" ".join([esptool, *cmd])}")
-        result = subprocess.run(
-            [esptool, *cmd], check=False, capture_output=True, text=True, encoding='utf-8'
-        )
-        if result.returncode == 0:
-            print("Successfully created combined binary image.")
-        else:
-            print(f"esptool merge-bin failed (exit code {result.returncode})")
-            if result.stderr:
-                print(result.stderr)
-    except Exception as e:
-        print(f"Error creating factory binary: {e}")
-
-
 #
 # Target: Build executable and linkable firmware or FS image
 #
@@ -1681,7 +1621,6 @@ if "nobuild" in COMMAND_LINE_TARGETS:
 else:
     target_elf = env.BuildProgram()
     silent_action = env.Action(firmware_metrics)
-    # Silence scons command output
     silent_action.strfunction = lambda target, source, env: ""
     env.AddPostAction(target_elf, silent_action)
     if set(["buildfs", "uploadfs", "uploadfsota"]) & set(COMMAND_LINE_TARGETS):
@@ -1707,10 +1646,6 @@ else:
                 join("$BUILD_DIR", "${PROGNAME}-encrypted"), target_firm
             )
         env.Depends(target_firm, "checkprogsize")
-        silent_action = env.Action(esp32_create_combined_bin)
-        # Silence scons command output
-        silent_action.strfunction = lambda target, source, env: ""
-        env.AddPostAction(target_firm, silent_action)
 
 # Configure platform targets
 env.AddPlatformTarget(
